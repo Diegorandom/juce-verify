@@ -1,0 +1,53 @@
+name: build-and-measure
+
+# El flujo hace lo mismo que un humano: trae JUCE, compila y MIDE.
+# Si una cifra deja de salir, el flujo falla: el arnés no comprueba que
+# compile, comprueba que siga midiendo lo que dice medir.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  measure:
+    runs-on: macos-14
+    env:
+      JUCE_TAG: 8.0.16-security
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Traer JUCE en el tag fijado
+        run: |
+          git clone --depth 1 --branch "$JUCE_TAG" \
+            https://github.com/juce-framework/JUCE.git "$RUNNER_TEMP/JUCE"
+
+      - name: Configurar
+        run: cmake -S . -B build -DJUCE_DIR="$RUNNER_TEMP/JUCE" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build -j 3
+
+      - name: Medir
+        id: medir
+        run: |
+          set -o pipefail
+          ./build/juce-verify_artefacts/Release/juce-verify todo | tee salida.txt
+
+      - name: Publicar la salida
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: medicion
+          path: salida.txt
+
+      # Las tres comprobaciones que deben sostenerse solas. Si alguna falla,
+      # el arnés dejó de verificar lo que promete y el flujo se pone rojo.
+      - name: El passthrough es bit-exacto
+        run: grep -q "bit-exacta" salida.txt
+
+      - name: El chasquido supera a la referencia
+        run: grep -q "exceso sobre la referencia:  sin suavizar" salida.txt
+
+      - name: La latencia es la que se cita
+        run: grep -q "coincide con la cifra que se dice en clase" salida.txt
